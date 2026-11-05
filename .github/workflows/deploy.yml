@@ -1,0 +1,40 @@
+name: Deploy to DigitalOcean VPS
+
+on:
+  push:
+    branches:
+      - main # Triggers only on push to main
+
+jobs:
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Checkout code (optional here, but good for future steps like tests)
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. SSH into VPS and deploy
+      - name: Deploy to VPS via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.VPS_PORT }}
+          script: |
+            echo ">>> Navigating to app directory"
+            cd ${{ secrets.APP_PATH }}
+
+            echo ">>> Pulling latest changes"
+            git pull origin main
+
+            echo ">>> Installing dependencies"
+            npm install --omit=dev
+
+            echo ">>> Restarting app with PM2"
+            pm2 restart app || pm2 start app.js --name "app"
+
+            echo ">>> Deployment complete!"
+            pm2 status

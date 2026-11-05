@@ -1,9 +1,9 @@
-const http = require('http');
+const http = require("http");
 
-http.createServer(
-	function(req, res) {
-		res.write("On the way to beign a full stack eng");
-		res.end();
-	}
-).listen(3000);
+http
+  .createServer(function (req, res) {
+    res.write("This text represents that CI CD works");
+    res.end();
+  })
+  .listen(3000);
 console.log("Server started");
