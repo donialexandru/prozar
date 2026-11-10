@@ -3,41 +3,87 @@ name: Deploy to DigitalOcean VPS
 on:
   push:
     branches:
-      - main # Triggers only on push to main
+      - main
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
 
 jobs:
-  deploy:
-    name: Deploy
+  build:
+    name: Build & Push Image
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.vars.outputs.image }}
 
     steps:
-      # 1. Checkout code (optional here, but good for future steps like tests)
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. SSH into VPS and deploy
+      - name: Set lowercase image name
+        id: vars
+        run: echo "image=${REGISTRY}/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.vars.outputs.image }}:latest
+            ${{ steps.vars.outputs.image }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
       - name: Deploy to VPS via SSH
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.VPS_PORT }}
           script: |
-            export NVM_DIR="$HOME/.nvm"
-            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+            set -e
 
             echo ">>> Navigating to app directory"
             cd ${{ secrets.APP_PATH }}
 
-            echo ">>> Pulling latest changes"
+            echo ">>> Pulling latest compose file"
             git pull origin main
 
-            echo ">>> Installing dependencies"
-            npm install --omit=dev
+            echo ">>> Logging in to GHCR"
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-            echo ">>> Restarting app with PM2"
-            pm2 restart app || pm2 start app.js --name "app"
+            echo ">>> Pulling latest image"
+            docker compose pull
+
+            echo ">>> Restarting containers"
+            docker compose up -d --no-build --remove-orphans
+
+            echo ">>> Cleaning up old images"
+            docker image prune -f
 
             echo ">>> Deployment complete!"
-            pm2 status
+            docker compose ps
